@@ -1,0 +1,85 @@
+class RandomIntersectionTree(BaseEstimator, RegressorMixin):
+    def __init__(self, max_depth=5, branching_factor=5, random_state=None):
+        self.max_depth = max_depth
+        self.branching_factor = branching_factor
+        self.random_state = random_state
+        self.tree = {}
+    
+    def fit(self, X, y):
+        if self.random_state is not None:
+            random.seed(self.random_state)
+        self._build_tree(X, y, depth=0, node_id=0)
+        return self
+    
+    def _build_tree(self, X, y, depth, node_id):
+        if depth >= self.max_depth:
+            return
+        n_samples, n_features = X.shape
+        selected_samples = random.sample(range(n_samples), min(self.branching_factor, n_samples))
+        
+        # Create a hash table to store the intersection results
+        hash_table = {}
+        for sample in selected_samples:
+            hash_val = tuple(X[sample, :])
+            if hash_val in hash_table:
+                hash_table[hash_val].append(y[sample])
+            else:
+                hash_table[hash_val] = [y[sample]]
+        
+        # Store the hash table at the current node
+        self.tree[node_id] = hash_table
+        
+        # Recursively build child nodes
+        next_node_id = node_id + 1
+        for hash_val, labels in hash_table.items():
+            child_X = np.array([X[i, :] for i, x in enumerate(X) if all(x == np.array(hash_val))])
+            child_y = np.array([y[i] for i, x in enumerate(X) if all(x == np.array(hash_val))])
+            self._build_tree(child_X, child_y, depth + 1, next_node_id)
+            next_node_id += 1
+            
+    def predict(self, X):
+        n_samples = X.shape[0]
+        predictions = np.zeros(n_samples)
+        for i in range(n_samples):
+            all_labels = self._query_tree(X[i, :], node_id=0)
+            if len(all_labels) == 0:
+                predictions[i] = 0
+            else:
+                predictions[i] = np.mean(all_labels)
+        return predictions
+    
+    def _query_tree(self, X, node_id):
+        if node_id not in self.tree:
+            return []
+        hash_val = tuple(X)
+        if hash_val not in self.tree[node_id]:
+            return []
+        labels = self.tree[node_id][hash_val]
+        next_node_id = node_id + 1
+        for _ in self.tree[node_id].keys():
+            labels.extend(self._query_tree(X, next_node_id))
+            next_node_id += 1
+        return labels
+
+# RandomIntersectionTrees クラスの定義
+class RandomIntersectionTrees(BaseEstimator, RegressorMixin):
+    def __init__(self, n_estimators=10, max_depth=5, branching_factor=5, random_state=None):
+        self.n_estimators = n_estimators
+        self.max_depth = max_depth
+        self.branching_factor = branching_factor
+        self.random_state = random_state
+        self.trees = []
+        
+    def fit(self, X, y):
+        for i in range(self.n_estimators):
+            tree = RandomIntersectionTree(max_depth=self.max_depth, branching_factor=self.branching_factor, random_state=self.random_state)
+            tree.fit(X, y)
+            self.trees.append(tree)
+        return self
+    
+    def predict(self, X):
+        n_samples = X.shape[0]
+        predictions = np.zeros(n_samples)
+        for tree in self.trees:
+            predictions += tree.predict(X)
+        return predictions / self.n_estimators
