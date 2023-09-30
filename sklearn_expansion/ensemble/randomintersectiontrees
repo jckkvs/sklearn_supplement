@@ -1,4 +1,4 @@
-class RandomIntersectionTree(BaseEstimator, RegressorMixin):
+class RandomIntersectionTreeRegressor(BaseEstimator, RegressorMixin):
     def __init__(self, max_depth=5, branching_factor=5, random_state=None):
         self.max_depth = max_depth
         self.branching_factor = branching_factor
@@ -62,7 +62,7 @@ class RandomIntersectionTree(BaseEstimator, RegressorMixin):
         return labels
 
 # RandomIntersectionTrees クラスの定義
-class RandomIntersectionTrees(BaseEstimator, RegressorMixin):
+class RandomIntersectionTreesRegressor(BaseEstimator, RegressorMixin):
     def __init__(self, n_estimators=10, max_depth=5, branching_factor=5, random_state=None):
         self.n_estimators = n_estimators
         self.max_depth = max_depth
@@ -83,3 +83,96 @@ class RandomIntersectionTrees(BaseEstimator, RegressorMixin):
         for tree in self.trees:
             predictions += tree.predict(X)
         return predictions / self.n_estimators
+
+from sklearn.base import BaseEstimator, ClassifierMixin
+import numpy as np
+import random
+
+class RandomIntersectionTreeClassifier(BaseEstimator, ClassifierMixin):
+    def __init__(self, max_depth=5, branching_factor=5):
+        self.max_depth = max_depth
+        self.branching_factor = branching_factor
+        self.tree = {}
+    
+    def fit(self, X, y, random_state=None):
+        if random_state:
+            random.seed(random_state)
+        self.classes_ = np.unique(y)
+        self._build_tree(X, y, depth=0, node_id=0)
+    
+    def _build_tree(self, X, y, depth, node_id):
+        if depth >= self.max_depth:
+            return
+        n_samples, n_features = X.shape
+        selected_samples = random.sample(range(n_samples), min(self.branching_factor, n_samples))
+        
+        # Create a hash table to store the intersection results
+        hash_table = {}
+        for sample in selected_samples:
+            hash_val = tuple(X[sample, :])
+            if hash_val in hash_table:
+                hash_table[hash_val].append(y[sample])
+            else:
+                hash_table[hash_val] = [y[sample]]
+        
+        # Store the hash table at the current node
+        self.tree[node_id] = hash_table
+        
+        # Recursively build child nodes
+        next_node_id = node_id + 1
+        for hash_val, labels in hash_table.items():
+            child_X = np.array([X[i, :] for i, x in enumerate(X) if all(x == np.array(hash_val))])
+            child_y = np.array([y[i] for i, x in enumerate(X) if all(x == np.array(hash_val))])
+            self._build_tree(child_X, child_y, depth + 1, next_node_id)
+            next_node_id += 1
+            
+    def predict(self, X):
+        n_samples = X.shape[0]
+        predictions = np.zeros(n_samples)
+        for i in range(n_samples):
+            all_labels = self._query_tree(X[i, :], node_id=0)
+            if len(all_labels) == 0:
+                predictions[i] = self.classes_[0]  # Default to the first class
+            else:
+                predictions[i] = max(set(all_labels), key=all_labels.count)  # Majority voting
+        return predictions
+    
+    def _query_tree(self, X, node_id):
+        if node_id not in self.tree:
+            return []
+        hash_val = tuple(X)
+        if hash_val not in self.tree[node_id]:
+            return []
+        labels = self.tree[node_id][hash_val]
+        next_node_id = node_id + 1
+        for _ in self.tree[node_id].keys():
+            labels.extend(self._query_tree(X, next_node_id))
+            next_node_id += 1
+        return labels
+
+class RandomIntersectionTreesClassifier(BaseEstimator, ClassifierMixin):
+    def __init__(self, n_trees=10, max_depth=5, branching_factor=5, random_state=None):
+        self.n_trees = n_trees
+        self.max_depth = max_depth
+        self.branching_factor = branching_factor
+        self.random_state = random_state
+        self.trees = []
+    
+    def fit(self, X, y):
+        self.classes_ = np.unique(y)
+        random.seed(self.random_state)
+        for _ in range(self.n_trees):
+            tree = RandomIntersectionTreeClassifier(max_depth=self.max_depth, branching_factor=self.branching_factor)
+            tree.fit(X, y, random_state=random.randint(0, 1e6))
+            self.trees.append(tree)
+        return self
+    
+    def predict(self, X):
+        n_samples = X.shape[0]
+        predictions = np.zeros((n_samples, len(self.classes_)))
+        for tree in self.trees:
+            tree_preds = tree.predict(X)
+            for i, pred in enumerate(tree_preds):
+                class_idx = np.where(self.classes_ == pred)[0][0]
+                predictions[i, class_idx] += 1
+        return self.classes_[np.argmax(predictions, axis=1)]
