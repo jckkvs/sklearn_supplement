@@ -34,7 +34,7 @@ class GRPForest(BaseEstimator, RegressorMixin):
         self.min_impurity_decrease = min_impurity_decrease
         self.ccp_alpha = ccp_alpha
         self.n_jobs = n_jobs
-
+    
     def _fit_single_tree(self, X, y, sample_weight, random_state):
         local_rng = RandomState(random_state)        
         # Initialize GaussianRandomProjection for each tree
@@ -42,18 +42,18 @@ class GRPForest(BaseEstimator, RegressorMixin):
         random_projection = GaussianRandomProjection(n_components=target_n_components, eps=self.eps, 
                                                      random_state=local_rng)
         
-        if sample_weight is not None:
-            indices = local_rng.choice(range(len(X)), size=len(X), p=sample_weight)
-            new_sample_weight = np.zeros(len(X))
-            for idx in indices:
-                new_sample_weight[idx] += sample_weight[idx]
-            X_bootstrap = X[indices, :]
-            y_bootstrap = y[indices]
+        n_samples = X.shape[0]
+        if self.bootstrap:
+            indices = local_rng.choice(n_samples, n_samples, replace=True)
+            curr_sample_weight = np.bincount(indices, minlength=n_samples)
+            curr_sample_weight = curr_sample_weight.astype(np.float64)
+            if sample_weight is not None:
+                curr_sample_weight *= sample_weight
+            X_sample, y_sample = X[indices], y[indices]
         else:
-            X_bootstrap, y_bootstrap = resample(X, y, random_state=local_rng)
-            new_sample_weight = None
-
-        X_transformed = random_projection.fit_transform(X_bootstrap)
+            X_sample, y_sample, curr_sample_weight = X, y, sample_weight
+    
+        X_transformed = random_projection.fit_transform(X_sample)
         model = DecisionTreeRegressor(
             criterion=self.criterion, splitter=self.splitter,
             max_depth=self.max_depth, min_samples_split=self.min_samples_split,
@@ -62,7 +62,7 @@ class GRPForest(BaseEstimator, RegressorMixin):
             max_leaf_nodes=self.max_leaf_nodes, min_impurity_decrease=self.min_impurity_decrease,
             ccp_alpha=self.ccp_alpha
         )
-        model.fit(X_transformed, y_bootstrap, sample_weight=new_sample_weight)
+        model.fit(X_transformed, y_sample, sample_weight=curr_sample_weight)
         return model, random_projection
 
     def fit(self, X, y, sample_weight=None):
