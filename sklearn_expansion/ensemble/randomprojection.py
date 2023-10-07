@@ -15,7 +15,7 @@ import numpy as np
 from numpy.random import RandomState
 
 class GRPForest(BaseEstimator, RegressorMixin):
-    def __init__(self, n_estimators=10, eps=0.1, 
+    def __init__(self, n_estimators=100, eps=0.1, 
                  criterion='squared_error', splitter='best', max_depth=None,
                  min_samples_split=2, min_samples_leaf=1, min_weight_fraction_leaf=0.0,
                  max_features=None, random_state=None, max_leaf_nodes=None,
@@ -68,19 +68,20 @@ class GRPForest(BaseEstimator, RegressorMixin):
     def fit(self, X, y, sample_weight=None):
         self.models_ = []
         self.projections_ = []
-        
+    
         if self.random_state is not None:
             rng = RandomState(self.random_state)
         else:
             rng = RandomState()
-        
+    
         random_states = [rng.randint(0, 1 << 30) for _ in range(self.n_estimators)]
-        
-        for random_state in random_states:
-            model, projection = self._fit_single_tree(X, y, sample_weight, random_state)
-            self.models_.append(model)
-            self.projections_.append(projection)
-
+    
+        # _fit_single_treeを並列で実行
+        results = Parallel(n_jobs=self.n_jobs)(delayed(self._fit_single_tree)(X, y, sample_weight, rs) for rs in random_states)
+    
+        # 結果をmodels_とprojections_に格納
+        self.models_, self.projections_ = zip(*results)
+    
         return self
     
     def predict(self, X):
