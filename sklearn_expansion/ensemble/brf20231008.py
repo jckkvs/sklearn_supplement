@@ -1,6 +1,89 @@
 # Displaying the entire BRFDecisionTreeRegressor class with all the methods and the build_tree function
 
+class BRFDecisionTreeRegressor(BaseEstimator, RegressorMixin):
+    def __init__(self, min_samples_leaf=5, p1=0.5, p2=0.5, criterion='mse'):
+        self.min_samples_leaf = min_samples_leaf
+        self.p1 = p1
+        self.p2 = p2
+        self.criterion = criterion
+        self.tree = None
+    
+    def fit(self, X, y):
+        self.tree = self.build_tree_fixed(X, y, depth=0, min_samples_leaf=self.min_samples_leaf, 
+                                          p1=self.p1, p2=self.p2, criterion=self.criterion)
+        
+    def build_tree_fixed(self, X, y, depth, min_samples_leaf, p1, p2, criterion):
+        n_samples, n_features = X.shape
+
+        if n_samples <= min_samples_leaf or np.all(y == y[0]):
+            return {'type': 'leaf', 'value': np.mean(y) if y.size > 0 else 0.0}
+
+        best_split = {'gain': np.inf}
+
+        if np.random.rand() < p1:
+            candidate_features = np.random.choice(n_features, 1)
+        else:
+            candidate_features = np.random.choice(n_features, int(np.sqrt(n_features)), replace=False)
+        
+        for feature_index in candidate_features:
+            feature_values = X[:, feature_index]
+            unique_values = np.unique(feature_values)
+            if unique_values.size < 2:
+                continue
+            
+            # Implement p2 for random split point selection
+            if np.random.rand() < p2:
+                split_values = [np.random.choice(unique_values)]
+            else:
+                split_values = (unique_values[:-1] + unique_values[1:]) / 2
+
+            for sv in split_values:
+                left_mask = feature_values < sv
+                right_mask = ~left_mask
+
+                if np.sum(left_mask) == 0 or np.sum(right_mask) == 0:
+                    continue
+
+                if criterion == 'mse':
+                    left_impurity = np.mean((y[left_mask] - np.mean(y[left_mask]))**2)
+                    right_impurity = np.mean((y[right_mask] - np.mean(y[right_mask]))**2)
+                elif criterion == 'mae':
+                    left_impurity = np.mean(np.abs(y[left_mask] - np.mean(y[left_mask])))
+                    right_impurity = np.mean(np.abs(y[right_mask] - np.mean(y[right_mask])))
+
+                gain = (left_impurity * np.sum(left_mask) + right_impurity * np.sum(right_mask)) / n_samples
+
+                if gain < best_split['gain']:
+                    best_split = {'gain': gain, 'feature_index': feature_index, 'split_value': sv,
+                                  'left_mask': left_mask, 'right_mask': right_mask}
+
+        if best_split['gain'] == np.inf:
+            return {'type': 'leaf', 'value': np.mean(y)}
+
+        left_tree = self.build_tree_fixed(X[best_split['left_mask']], y[best_split['left_mask']], depth+1,
+                                         min_samples_leaf, p1, p2, criterion)
+        right_tree = self.build_tree_fixed(X[best_split['right_mask']], y[best_split['right_mask']], depth+1,
+                                          min_samples_leaf, p1, p2, criterion)
+
+        return {'type': 'node', 'feature_index': best_split['feature_index'], 'split_value': best_split['split_value'],
+                'left_tree': left_tree, 'right_tree': right_tree}
+
+    def predict(self, X):
+        predictions = []
+        for x in X:
+            predictions.append(self._predict_single(x, self.tree))
+        return np.array(predictions)
+    
+    def _predict_single(self, x, tree):
+        if tree['type'] == 'leaf':
+            return tree['value']
+        if x[tree['feature_index']] < tree['split_value']:
+            return self._predict_single(x, tree['left_tree'])
+        else:
+            return self._predict_single(x, tree['right_tree'])
+
 class BRFDecisionTreeRegressor:
+    
     def __init__(self, min_samples_leaf=1, p1=0.5, p2=0.5, criterion='mse'):
         self.min_samples_leaf = min_samples_leaf
         self.p1 = p1
