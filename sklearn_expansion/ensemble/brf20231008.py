@@ -116,6 +116,42 @@ class BRFDecisionTreeRegressor(BaseEstimator, RegressorMixin):
 
 
 
+class BRFRandomForestRegressorWithRandomState(BaseEstimator, RegressorMixin):
+    def __init__(self, n_estimators=100, min_samples_leaf=5, p1=0.25, p2=0.25, criterion='mse', n_jobs=1, random_state=None):
+        self.n_estimators = n_estimators
+        self.min_samples_leaf = min_samples_leaf
+        self.p1 = p1
+        self.p2 = p2
+        self.criterion = criterion
+        self.n_jobs = n_jobs
+        self.random_state = random_state
+        self.trees = []
+        
+    def _fit_single_tree(self, X, y, random_state):
+        # Bootstrap sampling
+        n_samples = X.shape[0]
+        indices = np.random.choice(n_samples, n_samples, replace=True)
+        X_sample, y_sample = X[indices], y[indices]
+
+        # Create and fit a new BRF decision tree with unique random_state
+        tree = BRFDecisionTreeRegressor(min_samples_leaf=self.min_samples_leaf,
+                                        p1=self.p1, p2=self.p2, criterion=self.criterion)
+        tree.random_state = random_state
+        tree.fit(X_sample, y_sample)
+        return tree
+        
+    def fit(self, X, y):
+        # Initialize RandomState object based on self.random_state
+        random_state = RandomState(self.random_state)
+        
+        # Fit trees in parallel, each with a unique random_state
+        self.trees = Parallel(n_jobs=self.n_jobs)(delayed(self._fit_single_tree)(X, y, random_state.randint(1000000)) for _ in range(self.n_estimators))
+            
+    def predict(self, X):
+        # Average predictions from all trees
+        predictions = np.mean(Parallel(n_jobs=self.n_jobs)(delayed(tree.predict)(X) for tree in self.trees), axis=0)
+        return predictions
+
 class BRFDecisionTreeRegressor(BaseEstimator, RegressorMixin):
     def __init__(self, min_samples_leaf=5, p1=0.5, p2=0.5, criterion='mse'):
         self.min_samples_leaf = min_samples_leaf
