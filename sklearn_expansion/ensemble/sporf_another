@@ -1,0 +1,136 @@
+import numpy as np
+from sklearn.base import BaseEstimator, RegressorMixin
+from numpy.random import RandomState
+
+def find_best_split(feature_values, y_values, criterion="squared_error"):
+    unique_values = np.unique(feature_values)
+    best_gain = -np.inf  # Initialize to negative infinity
+    best_split_value = None
+
+    current_impurity = np.mean((y_values - np.mean(y_values)) ** 2)
+
+    for value in unique_values:
+        left_mask = feature_values < value
+        right_mask = ~left_mask
+
+        if np.sum(left_mask) == 0 or np.sum(right_mask) == 0:
+            continue
+
+        if criterion in ["squared_error", "mse"]:
+            left_impurity = np.mean(
+                (y_values[left_mask] - np.mean(y_values[left_mask])) ** 2
+            )
+            right_impurity = np.mean(
+                (y_values[right_mask] - np.mean(y_values[right_mask])) ** 2
+            )
+        elif criterion in ["mae", "absolute_error"]:
+            # Friedman MSE (For illustration, using the same calculation as squared_error here)
+            left_impurity = np.mean(
+                (y_values[left_mask] - np.mean(y_values[left_mask])) ** 2
+            )
+            right_impurity = np.mean(
+                (y_values[right_mask] - np.mean(y_values[right_mask])) ** 2
+            )
+        elif criterion == "absolute_error":
+            left_impurity = np.mean(
+                np.abs(y_values[left_mask] - np.mean(y_values[left_mask]))
+            )
+            right_impurity = np.mean(
+                np.abs(y_values[right_mask] - np.mean(y_values[right_mask]))
+            )
+        elif criterion == "poisson":
+            # Poisson deviance (For illustration, using the mean as lambda)
+            lambda_left = np.mean(y_values[left_mask])
+            lambda_right = np.mean(y_values[right_mask])
+            left_impurity = -2 * np.sum(
+                y_values[left_mask] * np.log(lambda_left) - lambda_left
+            )
+            right_impurity = -2 * np.sum(
+                y_values[right_mask] * np.log(lambda_right) - lambda_right
+            )
+        else:
+            raise ValueError("Unknown criterion: {}".format(criterion))
+
+        gain = current_impurity - (
+            (left_impurity * np.sum(left_mask) / len(y_values))
+            + (right_impurity * np.sum(right_mask) / len(y_values))
+        )
+
+        if gain > best_gain:
+            best_gain = gain
+            best_split_value = value
+
+    return best_gain, best_split_value
+
+# カスタム決定木（SporfTree）のクラス
+class SporfTree(BaseEstimator, RegressorMixin):
+    def __init__(self, lambda_val=0.5, d=2, criterion="squared_error", random_state=None):
+        self.lambda_val = lambda_val
+        self.d = d
+        self.criterion = criterion
+        self.random_state = random_state
+        self.split_feature = None
+        self.split_value = None
+        self.left = None
+        self.right = None
+        self.value = None
+
+    def fit(self, X, y):
+        self.rng = RandomState(self.random_state)
+        n_samples, n_features = X.shape
+
+        # リーフノードの場合
+        if n_samples <= 1:
+            self.value = np.mean(y)
+            return
+
+        # ランダムな射影行列Aを生成
+        A = self.rng.randn(n_features, self.d)
+        X_projected = X.dot(A)
+
+        # 最適な分割を探す（find_best_splitを使用）
+        best_gini = float('inf')
+        for feature_idx in range(self.d):
+            _, split_value = find_best_split(X_projected[:, feature_idx], y, self.criterion)
+            if split_value is not None:
+                self.split_feature = feature_idx
+                self.split_value = split_value
+                break
+
+        # ノードを分割
+        if self.split_feature is not None:
+            mask = X_projected[:, self.split_feature] < self.split_value
+            self.left = SporfTree(self.lambda_val, self.d, self.criterion, self.random_state)
+            self.left.fit(X[mask], y[mask])
+            self.right = SporfTree(self.lambda_val, self.d, self.criterion, self.random_state)
+            self.right.fit(X[~mask], y[~mask])
+        else:
+            self.value = np.mean(y)
+
+    def predict(self, X):
+        if self.value is not None:
+            return self.value
+        if X[self.split_feature] < self.split_value:
+            return self.left.predict(X)
+        else:
+            return self.right.predict(X)
+
+# SPORFのクラス
+class Sporf(BaseEstimator, RegressorMixin):
+    def __init__(self, n_trees=10, lambda_val=0.5, d=2, criterion="squared_error", random_state=None):
+        self.n_trees = n_trees
+        self.lambda_val = lambda_val
+        self.d = d
+        self.criterion = criterion
+        self.random_state = random_state
+        self.trees = []
+
+    def fit(self, X, y):
+        for _ in range(self.n_trees):
+            tree = SporfTree(self.lambda_val, self.d, self.criterion, self.random_state)
+            tree.fit(X, y)
+            self.trees.append(tree)
+
+    def predict(self, X):
+        predictions = np.array([tree.predict(X) for tree in self.trees])
+        return np.mean(predictions, axis=0)
